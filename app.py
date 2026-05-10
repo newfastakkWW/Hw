@@ -1,24 +1,17 @@
 from flask import Flask, request, jsonify, render_template_string
-import os, json, random, string
-# пмдорч срс опен срс для ключей, мне похуй
+import os, random, string
+# хуйнч йебаная мге похуй
 app = Flask(__name__)
-KEYS_FILE = "keys.json"
 ADMIN_TOKEN = os.environ.get('ADMIN_TOKEN', 'secret123')
 
-def load_keys():
-    if os.path.exists(KEYS_FILE):
-        with open(KEYS_FILE) as f:
-            return json.load(f)
-    return {"valid": [], "used": []}
-
-def save_keys(data):
-    with open(KEYS_FILE, "w") as f:
-        json.dump(data, f)
+# локально
+valid_keys = []
+used_keys = []
 
 def gen_key():
     parts = [''.join(random.choices(string.ascii_uppercase + string.digits, k=4)) for _ in range(3)]
     return "KEY-" + "-".join(parts)
-# паста 
+#паста
 ADMIN_HTML = """
 <!DOCTYPE html>
 <html>
@@ -38,7 +31,6 @@ ADMIN_HTML = """
 <body>
     <h2>🔑 Key Manager</h2>
     <div id="msg"></div>
-
     <div>
         <input type="password" id="token" placeholder="Admin token" />
         <button onclick="genKey()">Генерировать ключ</button>
@@ -49,10 +41,8 @@ ADMIN_HTML = """
         <input type="text" id="customKey" placeholder="Свой ключ (необязательно)" />
         <button onclick="addKey()">Добавить ключ</button>
     </div>
-
     <h2>Ключи:</h2>
     <div id="keyList"></div>
-
     <script>
         function getToken() { return document.getElementById('token').value; }
         function msg(t, err) { document.getElementById('msg').style.color = err ? '#f00' : '#ff0'; document.getElementById('msg').innerText = t; }
@@ -97,9 +87,7 @@ def gen():
     if request.json.get('token') != ADMIN_TOKEN:
         return jsonify({"error": "Forbidden"}), 403
     key = gen_key()
-    data = load_keys()
-    data["valid"].append(key)
-    save_keys(data)
+    valid_keys.append(key)
     return jsonify({"key": key})
 
 @app.route('/adm/add', methods=['POST'])
@@ -109,24 +97,20 @@ def add():
     key = request.json.get('key', '').upper().strip()
     if not key:
         return jsonify({"error": "Пустой ключ"}), 400
-    data = load_keys()
-    data["valid"].append(key)
-    save_keys(data)
+    valid_keys.append(key)
     return jsonify({"ok": True})
 
 @app.route('/adm/list', methods=['POST'])
 def list_keys():
     if request.json.get('token') != ADMIN_TOKEN:
         return jsonify({"error": "Forbidden"}), 403
-    return jsonify(load_keys())
+    return jsonify({"valid": valid_keys, "used": used_keys})
 
 @app.route('/check', methods=['POST'])
 def check_key():
     key = request.json.get('key', '').strip().upper()
-    data = load_keys()
-    if key in data["valid"] and key not in data["used"]:
-        data["used"].append(key)
-        save_keys(data)
+    if key in valid_keys and key not in used_keys:
+        used_keys.append(key)
         return jsonify({"valid": True})
     return jsonify({"valid": False})
 
