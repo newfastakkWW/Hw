@@ -1,18 +1,16 @@
 from flask import Flask, request, jsonify, render_template_string
-import os, random, string, datetime
+import os, random, string
 
 app = Flask(__name__)
+ADMIN_TOKEN = os.environ.get('ADMIN_TOKEN', 'secret123')
 
-def get_admin_token():
-    cipher = [0x34, 0x3f, 0x2d, 0x36, 0x33, 0x31, 0x6e]
-    key = "newlik4"
-    return "".join(chr(c ^ ord(key[i % len(key)])) for i, c in enumerate(cipher))
+# Перешли на словарь для O(1) скорости поиска
+# Формат: {"KEY-123": {"used": False, "days": 30}}
+keys_db = {}
 
-ADMIN_TOKEN = os.environ.get('ADMIN_TOKEN', get_admin_token())
-keys_db = []
-
-def gen_random_key():
-    return f"KEY-{''.join(random.choices(string.ascii_uppercase + string.digits, k=4))}-{''.join(random.choices(string.ascii_uppercase + string.digits, k=4))}"
+def gen_key():
+    parts = [''.join(random.choices(string.ascii_uppercase + string.digits, k=4)) for _ in range(3)]
+    return "KEY-" + "-".join(parts)
 
 ADMIN_HTML = """
 <!DOCTYPE html>
@@ -20,83 +18,210 @@ ADMIN_HTML = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Equigen Key System</title>
-    <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500&display=swap" rel="stylesheet">
+    <title>Key Admin MD3</title>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500&display=swap" rel="stylesheet">
     <style>
         :root {
-            --primary: #6750A4;
-            --surface: #FEF7FF;
-            --container: #F3EDF7;
+            --md-sys-color-background: #1c1b1f;
+            --md-sys-color-surface: #2b2930;
+            --md-sys-color-primary: #d0bcff;
+            --md-sys-color-on-primary: #381e72;
+            --md-sys-color-error: #f2b8b5;
+            --md-sys-color-outline: #938f99;
+            --md-sys-color-on-surface: #e6e1e5;
+            --md-sys-color-on-surface-variant: #cac4d0;
         }
-        body { font-family: 'Google Sans', sans-serif; background: var(--surface); padding: 20px; color: #1C1B1F; }
-        .card { background: var(--container); border-radius: 24px; padding: 24px; margin-bottom: 16px; border: 1px solid #E6E0E9; }
+        body { 
+            font-family: 'Roboto', sans-serif; 
+            background: var(--md-sys-color-background); 
+            color: var(--md-sys-color-on-surface); 
+            padding: 20px; 
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .container {
+            max-width: 600px;
+            width: 100%;
+        }
+        h2 { 
+            font-weight: 500; 
+            color: var(--md-sys-color-primary); 
+            margin-bottom: 20px;
+        }
+        .card {
+            background: var(--md-sys-color-surface);
+            border-radius: 24px;
+            padding: 24px;
+            margin-bottom: 24px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+        }
         input { 
-            width: 100%; border: 1px solid #79747E; border-radius: 8px; padding: 12px; 
-            margin: 8px 0; background: white; box-sizing: border-box; font-size: 16px;
+            background: var(--md-sys-color-background); 
+            color: var(--md-sys-color-on-surface); 
+            border: 1px solid var(--md-sys-color-outline); 
+            border-radius: 16px;
+            padding: 14px 16px; 
+            margin: 8px 0;
+            width: calc(100% - 34px);
+            font-size: 16px;
+            outline: none;
+            transition: border-color 0.2s;
         }
-        .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+        input:focus {
+            border-color: var(--md-sys-color-primary);
+        }
+        .row {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+        .row input {
+            margin: 0;
+            flex: 1;
+        }
         button { 
-            background: var(--primary); color: white; border: none; border-radius: 20px; 
-            padding: 10px 20px; cursor: pointer; font-weight: 500; flex-grow: 1;
+            background: var(--md-sys-color-primary); 
+            color: var(--md-sys-color-on-primary); 
+            border: none; 
+            border-radius: 100px;
+            padding: 10px 24px; 
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer; 
+            transition: background 0.2s, transform 0.1s;
+            height: 48px;
+            white-space: nowrap;
         }
-        .key-row { 
-            display: flex; justify-content: space-between; align-items: center; 
-            padding: 12px; border-bottom: 1px solid rgba(0,0,0,0.05); 
+        button:hover { 
+            opacity: 0.9; 
         }
-        .status { font-size: 12px; padding: 4px 8px; border-radius: 12px; font-weight: bold; }
-        .status.used { background: #F9DEDC; color: #410E0B; }
-        .status.active { background: #E8DEF8; color: #1D192B; }
+        button:active {
+            transform: scale(0.98);
+        }
+        .key-item { 
+            background: var(--md-sys-color-background); 
+            padding: 16px; 
+            margin: 8px 0; 
+            border-radius: 16px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .used { 
+            border: 1px solid var(--md-sys-color-error);
+            color: var(--md-sys-color-on-surface-variant);
+        }
+        .badge {
+            background: var(--md-sys-color-surface);
+            padding: 6px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 500;
+            color: var(--md-sys-color-primary);
+            margin-left: 8px;
+        }
+        .badge.error {
+            color: var(--md-sys-color-error);
+        }
+        .badges-container {
+            display: flex;
+            align-items: center;
+        }
+        #msg { margin-bottom: 16px; font-weight: 500; min-height: 20px;}
     </style>
 </head>
 <body>
-    <div class="card">
-        <h3>Управление ключами</h3>
-        <input type="password" id="token" placeholder="Админ-токен (adm_key)">
-        <input type="text" id="customKey" placeholder="Кастомный ключ (пусто для рандома)">
-        <input type="number" id="days" placeholder="Срок действия в днях" value="1">
-        <div class="actions">
-            <button onclick="genAction()">Создать ключ</button>
-            <button onclick="listAction()" style="background:#49454F">Обновить список</button>
+    <div class="container">
+        <h2>🔑 Key Admin</h2>
+        <div class="card">
+            <input type="password" id="token" placeholder="Admin token" />
+            <div id="msg"></div>
+        </div>
+
+        <div class="card">
+            <h3 style="margin-top: 0;">Генерация</h3>
+            <div class="row">
+                <input type="number" id="genDays" placeholder="Дней (стандартно 30)" />
+                <button onclick="genKey()">Создать</button>
+            </div>
+            
+            <h3>Свой ключ</h3>
+            <div class="row">
+                <input type="text" id="customKey" placeholder="Формат: KEY-..." />
+                <input type="number" id="customDays" placeholder="Дней" style="max-width: 100px;" />
+                <button onclick="addKey()">Добавить</button>
+            </div>
+        </div>
+
+        <div class="card">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                <h3 style="margin: 0;">Список ключей</h3>
+                <button onclick="loadKeys()">Обновить</button>
+            </div>
+            <div id="keyList"></div>
         </div>
     </div>
 
-    <div class="card">
-        <h3>Список ключей</h3>
-        <div id="list"></div>
-    </div>
-
     <script>
-        async function api(path, body) {
-            const r = await fetch(path, {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({...body, token: document.getElementById('token').value})
+        function getToken() { return document.getElementById('token').value; }
+        function msg(t, err) { 
+            const el = document.getElementById('msg');
+            el.style.color = err ? 'var(--md-sys-color-error)' : 'var(--md-sys-color-primary)'; 
+            el.innerText = t; 
+            setTimeout(() => el.innerText = '', 3000);
+        }
+
+        async function genKey() {
+            const days = document.getElementById('genDays').value || 30;
+            const r = await fetch('/adm/gen', {
+                method:'POST', 
+                headers:{'Content-Type':'application/json'}, 
+                body: JSON.stringify({token: getToken(), days: parseInt(days)})
             });
-            return await r.json();
+            const d = await r.json();
+            if (d.key) { msg('Создан: ' + d.key); loadKeys(); }
+            else msg(d.error || 'Ошибка', true);
         }
 
-        async function genAction() {
-            const custom = document.getElementById('customKey').value;
-            const days = document.getElementById('days').value;
-            const d = await api('/adm/gen', {key: custom, days: parseInt(days || 1)});
-            if (d.error) alert("Ошибка: " + d.error); else {
-                document.getElementById('customKey').value = '';
-                listAction();
-            }
+        async function addKey() {
+            const key = document.getElementById('customKey').value;
+            const days = document.getElementById('customDays').value || 30;
+            const r = await fetch('/adm/add', {
+                method:'POST', 
+                headers:{'Content-Type':'application/json'}, 
+                body: JSON.stringify({token: getToken(), key: key, days: parseInt(days)})
+            });
+            const d = await r.json();
+            if (d.ok) { msg('Добавлен!'); loadKeys(); }
+            else msg(d.error || 'Ошибка', true);
         }
 
-        async function listAction() {
-            const d = await api('/adm/listall', {});
-            if (d.error) return alert("Ошибка: " + d.error);
-            document.getElementById('list').innerHTML = d.keys.map(k => `
-                <div class="key-row">
-                    <div>
-                        <strong>${k.key}</strong><br>
-                        <small>${k.days} дн. | ${k.created_at.split('T')[0]}</small>
+        async function loadKeys() {
+            const r = await fetch('/adm/listall', {
+                method:'POST', 
+                headers:{'Content-Type':'application/json'}, 
+                body: JSON.stringify({token: getToken()})
+            });
+            const d = await r.json();
+            if (d.error) { msg(d.error, true); return; }
+            
+            const el = document.getElementById('keyList');
+            el.innerHTML = '';
+            
+            for (const [key, data] of Object.entries(d.keys)) {
+                const isUsed = data.used;
+                el.innerHTML += `
+                    <div class="key-item ${isUsed ? 'used' : ''}">
+                        <span style="font-family: monospace; font-size: 16px;">${key}</span>
+                        <div class="badges-container">
+                            <span class="badge ${isUsed ? 'error' : ''}">${data.days} дней</span>
+                            <span class="badge ${isUsed ? 'error' : ''}">${isUsed ? 'ЮЗНУТ' : 'АКТИВЕН'}</span>
+                        </div>
                     </div>
-                    <span class="status ${k.used ? 'used' : 'active'}">${k.used ? 'ИСПОЛЬЗОВАН' : 'АКТИВЕН'}</span>
-                </div>
-            `).reverse().join('');
+                `;
+            }
         }
     </script>
 </body>
@@ -109,21 +234,28 @@ def admin():
 
 @app.route('/adm/gen', methods=['POST'])
 def gen():
-    data = request.json
-    if data.get('token') != ADMIN_TOKEN:
+    if request.json.get('token') != ADMIN_TOKEN:
         return jsonify({"error": "Forbidden"}), 403
     
-    key_val = data.get('key').strip().upper() if data.get('key') else gen_random_key()
-    days = data.get('days', 1)
+    days = request.json.get('days', 30)
+    key = gen_key()
+    keys_db[key] = {"used": False, "days": days}
     
-    new_key = {
-        "key": key_val,
-        "used": False,
-        "days": int(days),
-        "created_at": datetime.datetime.now().isoformat()
-    }
-    keys_db.append(new_key)
-    return jsonify({"ok": True, "key": key_val})
+    return jsonify({"key": key, "days": days})
+
+@app.route('/adm/add', methods=['POST'])
+def add():
+    if request.json.get('token') != ADMIN_TOKEN:
+        return jsonify({"error": "Forbidden"}), 403
+    
+    key = request.json.get('key', '').upper().strip()
+    days = request.json.get('days', 30)
+    
+    if not key:
+        return jsonify({"error": "Пустой ключ"}), 400
+        
+    keys_db[key] = {"used": False, "days": days}
+    return jsonify({"ok": True})
 
 @app.route('/adm/listall', methods=['POST'])
 def list_all():
@@ -133,12 +265,13 @@ def list_all():
 
 @app.route('/check', methods=['POST'])
 def check_key():
-    user_key = request.json.get('key', '').strip().upper()
-    for k in keys_db:
-        if k["key"] == user_key and not k["used"]:
-            k["used"] = True
-            return jsonify({"valid": True, "days": k["days"]})
+    key = request.json.get('key', '').strip().upper()
+    
+    if key in keys_db and not keys_db[key]['used']:
+        keys_db[key]['used'] = True
+        return jsonify({"valid": True, "days": keys_db[key]['days']})
+        
     return jsonify({"valid": False})
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
